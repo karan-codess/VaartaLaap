@@ -37,6 +37,44 @@ app.get('/',(req,res)=>{
 })
 
 
+app.post('/api/widget/onboard',async(req,res)=>{
+    const {name,profession,goal}=req.body;
+    try{
+        if(!name || !profession || !goal){
+            return res.status(400).json({error:'Name, profession, and goal are required'});
+        }
+
+
+        const visitor=new Visitor({
+            name,
+            profession,
+            goal
+        });
+        await visitor.save();
+
+
+        const conversation=new Conversation({
+            visitor:visitor._id,
+        });
+        await conversation.save();
+        
+        console.log('New visitor onboarded:',{name,profession,goal});
+
+        return res.status(201).json({message:'Visitor onboarded successfully',visitorId:visitor._id,conversationId:conversation._id,
+            visitor:{
+                name:visitor.name,
+                profession:visitor.profession,
+                goal:visitor.goal
+            }
+        });
+    }
+    catch(err){
+        console.error('Error in onboarding:',err);
+        return res.status(500).json({error:'Internal server error'});
+    }
+})
+
+
 
 
 app.listen(PORT,()=>{
