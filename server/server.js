@@ -75,6 +75,91 @@ app.post('/api/widget/onboard',async(req,res)=>{
 })
 
 
+app.post("/api/widget/history/:visitorId",async(req,res)=>{
+    const {visitorId}=req.params;
+    try{
+        if(!visitorId){
+            return res.status(400).json({error:'Visitor ID is required'});
+        }
+        const conversation=await Conversation.findOne({visitorId});
+        if(!conversation){
+            return res.status(404).json({error:'Conversation not found for this visitor'});
+        }
+        const messages=await Message.find({conversationId:conversation._id}).sort({createdAt:1});
+        return res.status(200).json({
+            visitorName:conversation.visitorId.name,
+            conversationId:conversation._id,
+            messages:messages.map(msg=>({
+                sender:msg.sender,
+                text:msg.text,
+                createdAt:msg.createdAt
+            }))
+        });
+    }
+    catch(err){
+        console.error('Error fetching conversation history:',err);
+        return res.status(500).json({error:'Internal server error'});
+    }
+})
+
+
+app.post('/api/widget/chat',async(req,res)=>{
+    const{visitorId,conversationId,message}=req.body;
+    try{
+        if(!visitorId || !conversationId || !message){
+            return res.status(400).json({error:'Visitor ID, conversation ID, and message are required'});
+        }
+        if(!mongoose.Types.ObjectId.isValid(visitorId) || !mongoose.Types.ObjectId.isValid(conversationId)){
+            return res.status(400).json({error:'Invalid visitor ID or conversation ID'});
+        }
+        const visitor=await Visitor.findById(visitorId);
+        if(!visitor){
+            return res.status(404).json({error:'Visitor not found'});
+        }
+        const visitorMessage=new Message({
+            conversationId,
+            senderId:'visitor',
+            text:message
+        });
+        await visitorMessage.save();
+
+        const pastMessages=await Message.find({conversationId}).sort({createdAt:1}).limit(20);
+
+        const formattedChatHistory=pastMessages.map(msg=>({
+            role:msg.senderId==='visitor'?'user':'assistant',
+            content:msg.text
+        }));
+
+
+        const visitorContext=`Visitor Name: ${visitor.name}\nProfession: ${visitor.profession}\nGoal: ${visitor.goal}`;
+        const fullSystemInstruction=`${config.SYSTEM_PROMPT}\n\n${visitorContext}`;
+        const promptMessages=[
+            {role:'system',content:fullSystemInstruction},
+            ...formattedChatHistory,
+            {role:'user',content:message}
+        ]
+
+        if(groqApiKey){
+            try{
+                const completion=await Groq.chat.completions.create({
+                    model:config.GROQ_MODEL,
+                    messages:promptMessages,
+                    maxTokens:1024,
+                    temperature:0.7
+                })
+                
+                    
+            }catch(err){
+
+            }
+        }
+
+    
+    }catch(err){
+
+    }
+})
+
 
 
 app.listen(PORT,()=>{

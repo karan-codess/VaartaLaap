@@ -8,7 +8,7 @@ const MessageSchema = new mongoose.Schema({
     },
     senderId:{
         type:String,
-        enum:['visitors','ai'],
+        enum:['visitor','ai'],
         required:true
     },
     content:{
