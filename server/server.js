@@ -17,11 +17,39 @@ const Message=require('./model/message.js');
 const app=express()
 const PORT=process.env.PORT || 5000;
 
+app.use(express.json());
+app.use(cors());
+app.use(helmet(
+    {
+        contentSecurityPolicy:false,
+        crossOriginEmbedderPolicy:false,
+        frameguard:false,
+        crossOriginResourcePolicy:false
+    }
+));
+
+
+const apiLimiter=rateLimit({
+    windowMs:15*60*1000,
+    max:100,
+    standardHeaders:true,
+    legacyHeaders:false,
+    message:'Too many requests from this IP, please try again after 15 minutes'
+})
+app.use('/api/',apiLimiter);
+
+app.use(express.static(path.join(__dirname,'public')));
+
+
 const groqApiKey=process.env.GROQ_API_KEY;
 if(!groqApiKey){
     console.error('GROQ_API_KEY is not set in environment variables');
     process.exit(1);
 }
+
+const groq=new Groq({
+    apiKey:groqApiKey
+});
 
 const mongoURI=process.env.MONGO_URI;
 mongoose.connect(mongoURI)
@@ -147,20 +175,101 @@ app.post('/api/widget/chat',async(req,res)=>{
                     maxTokens:1024,
                     temperature:0.7
                 })
+                aiReplyText=completion.choices[0].message.content;
+
                 
                     
             }catch(err){
-
+                console.error('Error getting respnse from Groq:',err);
+                aiReplyText="Sorry, I'm having trouble generating a response right now. Please try again later.";
             }
+        }else{
+            aiReplyText="GROQ_API_KEY is not configured. Please set it in environment variables.";
         }
+        const aiMessage=new Message({
+            conversationId,
+            senderId:'ai',
+            text:aiReplyText
+        });
+        await aiMessage.save();
+        return res.status(200).json({reply:aiReplyText});
 
     
     }catch(err){
-
+        console.error('Error in chat endpoint:',err);
+        return res.status(500).json({error:'Internal server error'});
     }
 })
 
 
+app.get('/api/analytics',async(req,res)=>{
+    try{
+        const totalVisitors=await Visitor.countDocuments();
+        const totalConversations=await Conversation.countDocuments();
+        const totalMessages=await Message.countDocuments();
+        const professionsCount=await Visitor.aggregate([
+            {$group:{_id:'$profession',count:{$sum:1}}},
+            {$sort :{count:-1}}
+        ]);
+        return res.status(200).json({
+            totalVisitors,
+            totalConversations,
+            totalMessages,
+            professions:professionsCount
+        });
+    }
+    catch(err){
+        console.error('Error fetching analytics:',err);
+        return res.status(500).json({error:'Internal server error'});
+    }
+})
+
+
+app.get("/api/conversations",async(req,res)=>{
+    try{
+        const conversations=await Conversation.find().populate('visitorId').sort({createdAt:-1}).limit(50);
+        return res.status(200).json(
+            conversations
+        )
+    }catch(err){
+        console.error('Error fetching conversations:',err);
+        return res.status(500).json({error:'Internal server error'});
+    }
+})
+
+
+app.get("/api/conversations/:conversationId",async(req,res)=>{
+    if(!mongoose.Types.ObjectId.isValid(req.params.conversationId)){
+        return res.status(400).json({error:'Invalid conversation ID'});
+    }
+    const conversation=await Conversation.findById(req.params.conversationId).populate('visitorId');
+    if(!conversation){
+        return res.status(404).json({error:'Conversation not found'});
+    }
+    const messages=await Message.find({conversationId:conversation._id}).sort({createdAt:1});
+    return res.status(200).json({
+        conversation:{
+            id:conversation._id,
+            visitor:{
+                name:conversation.visitorId.name,
+                profession:conversation.visitorId.profession,
+                goal:conversation.visitorId.goal
+        },
+        messages:{
+            messages:messages.map(msg=>({
+                sender:msg.senderId,
+                text:msg.text,
+                createdAt:msg.createdAt
+            }))
+        }
+    }
+    })
+})
+
+
+// app.use('*',(req,res)=>{
+//     res.sendFile(path.join(__dirname,'public','index.html'));
+// })
 
 app.listen(PORT,()=>{
     console.log(`Server is running on port ${PORT}`);
